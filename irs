@@ -1,0 +1,310 @@
+#!/usr/bin/ruby
+
+if !File.exist? "config.rb"
+	puts "ERROR: You must copy config.sample.rb to config.rb and enter your ssh details.\n"
+	exit
+end
+
+require 'rubygems'
+require 'dnssd'
+require 'timeout'
+require 'config.rb'
+
+class RemoteSync
+	def initialize(mode=nil)
+		if $ssh_hostname == nil
+			puts "ERROR: You must set $ssh_hostname in config.rb.\n"
+			exit
+		end
+
+		if $ssh_username == nil
+			puts "ERROR: You must set $ssh_username in config.rb.\n"
+			exit
+		end
+
+		if $ssh_port == nil
+			puts "ERROR: You must set $ssh_port in config.rb.\n"
+			exit
+		end
+	end
+
+	def usage
+		puts "\n==========================================================="
+		puts "iTunes Remote Sync v1.0 by m4rkw - http://twitter.com/m4rkw"
+		puts "==========================================================="
+		puts "\nUsage:\n\n"
+		puts "irs dump\n\n"
+		puts " - dumps out idevices and itunes libraries detected on the local network. use this to find the names"
+		puts " - of your idevice and itunes library that you want to sync.\n\n"
+		puts "irs sync\n\n"
+		puts " - establishes Bonjour proxies allowing your iDevice to appear in iTunes.\n\n"
+		puts "irs off\n\n"
+		puts " - removes local and remote Bonjour proxies.\n\n"
+	end
+
+	def dump
+		puts "\nLooking for iDevices on local network ... \n\n"
+
+		self.browse("_apple-mobdev._tcp").each { |i|
+			puts "#{i[:name]} (#{i[:ip]}:#{i[:port]})"
+		}
+
+		puts "\nLooking for iTunes libraries on local network ... \n\n"
+
+		self.browse("_atc._tcp").each { |i|
+			puts "#{i[:name]} (#{i[:ip]}:#{i[:port]})"
+		}
+
+		puts "\n"
+	end
+
+	def print(msg)
+		printf("#{msg}")
+		STDOUT.flush
+	end
+
+	def rcmd(cmd)
+		`ssh -p #{$ssh_port} #{$ssh_username}@#{$ssh_hostname} -o PasswordAuthentication=no -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no "#{cmd}" 2>/dev/null`
+	end
+
+	def rkill(ps)
+		resp = self.rcmd "ps axww |grep '#{ps}' |grep -v grep"
+
+		tokill = '';
+
+		resp.lines.to_a.each { |line|
+			if m = line.match(/^[\s\t]*?([0-9]+)[\s\t]/)
+				tokill += "#{m[1]} "
+			end
+		}
+
+		self.rcmd "kill -9 #{tokill}"
+	end
+
+	def sync
+		res = `ps auxww |grep 'SCREEN -dmS -tirs_dnssd dns-sd -P ' |grep -v grep`
+
+		if res.length != 0
+			puts "It looks like you already have Bonjour proxies set up.\n\n"
+			puts "You should run \"irs off\" to clean these up before trying to establish new ones.\n"
+			exit
+		end
+
+		self.print "Querying remote iTunes server ... "
+
+		if $itunes_library_name != nil
+			name = $itunes_library_name
+		else
+			self.rcmd "dns-sd -B _atc._tcp >/tmp/.irs_itunes_lookup\&"
+			sleep $dns_sd_delay
+
+			self.rkill "dns-sd -B _atc._tcp"
+
+			resp = self.rcmd "cat /tmp/.irs_itunes_lookup; rm -f /tmp/.irs_itunes_lookup"
+
+			if m = resp.match(/^[0-9]+:[0-9]+:[0-9]+\.[0-9]+[\s\t]+[a-zA-Z]+[\s\t]+[0-9]+[\s\t]+[0-9]+[\s\t]+([a-zA-Z0-9\._]+)[\s\t]+([a-zA-Z0-9\._\-]+)[\s\t]+([a-zA-Z0-9\._\-]+)$/)
+				name = m[3]
+			else
+				puts "failed\n\nUnable to find remote iTunes library (are you sure iTunes is running?)\n"
+				exit
+			end
+		end
+
+		self.rcmd "dns-sd -L #{name} _atc._tcp. >/tmp/.irs_itunes_lookup\&"
+		sleep $dns_sd_delay
+
+		self.rkill "dns-sd -L #{name} _atc._tcp."
+
+		resp = self.rcmd "cat /tmp/.irs_itunes_lookup; rm -f /tmp/.irs_itunes_lookup"
+
+		if m = resp.match(/can be reached at (.*?)\.:([0-9]+) /)
+			host = m[1]
+			port = m[2]
+		else
+			puts "failed\n\nUnable to resolve remote iTunes library via dns-sd -L.\n"
+			exit
+		end
+
+		if m = resp.match(/libid=([0-9A-F]+)/)
+			libid = m[1]
+		else
+			puts "failed\n\nUnable to discover remote itunes library-id.\n"
+			exit
+		end
+
+		resp = self.rcmd "/sbin/ping -c1 #{host} |head -n1"
+
+		if m = resp.match(/^PING .*? \(([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\)/)
+			ip = m[1]
+		else
+			puts "failed\n\nUnable to resolve #{host} at the remote host.\n"
+			exit
+		end
+
+		resp = self.rcmd "/sbin/ifconfig |egrep -A1 '^ppp[0-9]+:' |head -n2 |tail -n1"
+
+		if m = resp.match(/^[\s\t]+inet ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+) --> ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+) netmask/)
+			remote_endpoint = m[1]
+			local_endpoint = m[2]
+		else
+			puts "failed\n\nVPN not established, please connect your iDevice to the VPN before attempting to sync.\n"
+			exit
+		end
+
+		puts "OK\n\nLibrary: #{name} @ #{ip}:#{port} [#{libid}]\n"
+		puts "\s\s\s\sVPN: #{remote_endpoint} --> #{local_endpoint}\n\n"
+
+		self.print "Looking for local iDevices ... "
+
+		devices = self.browse("_apple-mobdev._tcp")
+
+		devices.push( {:name => "bob", :ip => "1.1.1.1", :port => 12345, :host => "HOST"})
+
+		if devices.empty?
+			puts "failed\n\nNo iDevices were found on the local network.\n"
+			exit
+		end
+
+		if devices.length >1
+			if $iphone_name != nil
+				device = nil
+				devices.each { |i|
+					if i[:name] == $iphone_name
+						device = i
+						break
+					end
+				}
+				puts "error\n\nThe configured device (#{$iphone_name}) was not found on the local network.\n"
+				exit
+			else
+				puts "OK\n\nMore than one device was found, please select:\n\n"
+				puts "(To avoid having to do this in future, set the name of your device in config.rb)\n\n"
+
+				while 1 do
+					i = 1
+					devices.each { |d|
+						puts "#{i}. #{d[:name]}, #{d[:host]} (#{d[:ip]}:#{d[:port]})"
+						i += 1
+					}
+					self.print "\nChoice: "
+
+					op = STDIN.gets.chomp
+
+					if op.match(/^[0-9]+$/) and (op.to_i-1) >= 0 and (op.to_i-1) < devices.length
+						puts "\n"
+						break
+					end
+
+					puts "\n"
+				end
+
+				device = devices[op.to_i-1]
+			end
+		else
+			device = devices[0]
+
+			if $iphone_name != nil and device[:name] != $iphone_name
+				puts "error\n\nThe configured device (#{$iphone_name}) was not found on the local network.\n"
+				exit
+			end
+
+			puts "OK\n\nDevice: #{device[:name]} (#{device[:ip]} #{device[:port]})\n\n"
+		end
+
+		self.print "Establishing local Bonjour proxy ... "
+
+		`screen -dmS -tirs_dnssd dns-sd -P #{name} _atc._tcp local. #{port} #{name}.local. #{remote_endpoint} "libid=#{libid}"`
+
+		self.print "OK\nEstablishing remote Bonjour proxy ... "
+
+		`ssh -p #{$ssh_port} #{$ssh_username}@#{$ssh_hostname} "screen -dmS -tirs_dnssd dns-sd -P #{device[:name]} _apple-mobdev._tcp local #{device[:port]} iphone.local. #{local_endpoint}" 2>/dev/null`
+
+		puts "OK\n\nThe proxies are up, your iDevice should appear in iTunes within 30-60 seconds.\n"
+		puts "When you're done syncing, type \"irs off\" to clear the proxies.\n\n"
+	end
+
+	def off
+		self.print "Killing local proxy ... "
+
+		`ps axww |grep 'dns-sd -P ' |grep -v grep`.lines.to_a.each { |line|
+			m = line.match(/^[\s\t]*?([0-9]+)[\s\t]/)
+			`kill -9 #{m[1]} 2>/dev/null`
+		}
+
+		self.print "OK\nKilling remote proxy ... "
+
+		self.rkill "dns-sd -P"
+
+		puts "OK\n"
+	end
+
+	def browse(type, find_name=nil)
+		browser = DNSSD::Service.new
+
+		host = port = ip = nil
+		services = {}
+		instances = []
+
+		begin
+			timeout $browse_timeout do
+				browser.browse type do |reply|
+					services[reply.fullname] = reply
+					next if reply.flags.more_coming?
+
+					services.sort_by do |_, service|
+						[(service.flags.add? ? 0 : 1), service.fullname]
+					end.each do |_, service|
+						next unless service.flags.add?
+
+						DNSSD::Service.new.resolve service do |r|
+							host = r.target
+							port = r.port
+							break
+						end
+
+						DNSSD::Service.new.getaddrinfo host do |a|
+							if a.address.match(/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/)
+								ip = a.address
+								break
+							end
+						end
+
+						if host != nil
+							if find_name != nil
+								if find_name == reply.name
+									return {:host => host, :ip => ip, :port => port}
+								end
+							else
+								instances.push({:host => host, :port => port, :ip => ip, :name => reply.name})
+								host = port = ip = nil
+							end
+						end
+					end
+					services.clear
+				end
+			end
+		rescue Timeout::Error
+		end
+
+		if find_name != nil then return false end
+
+		instances
+	end
+end
+
+if ARGV.length == 0
+	RemoteSync.new.usage
+else
+	case ARGV[0]
+		when "dump"
+			RemoteSync.new.dump
+		when "sync"
+			RemoteSync.new.sync
+		when "lookup"
+			RemoteSync.new.lookup
+		when "off"
+			RemoteSync.new.off
+		else
+			RemoteSync.new.usage
+	end
+end

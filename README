@@ -1,0 +1,109 @@
+
+:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+::: iTunes Remote Sync v1.0 ALPHA by m4rkw - http://twitter.com/m4rkw :::
+:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+:: Introduction
+
+iOS5 and iCloud are cool, but it's annoying that you can't sync your device remotely.
+
+It would be nice if you could simply VPN into your home machine in order to sync, but because
+iTunes uses the Bonjour protocol, which uses multicast DNS, the iDevice and iTunes can't see
+eachother even if there's a VPN connection.
+
+iTunes Remote Sync solves this by creating temporary Bonjour proxies that allow your device
+and iTunes to communicate over the VPN.
+
+There are some limitations to this however, you will need a computer at the remote location in
+order to broadcast the Bonjour proxy to your device.  That computer needs to be a Mac, and you
+also need the remote Mac to be on the same wifi network as your iDevice.  You can however use a
+Macbook with a 3G dongle, just create an ad-hoc wifi network on the macbook, join your iDevice
+to it and give both a different IP address.
+
+
+:: Requirements
+
+ - iPhone, iPod Touch or iPad
+ - Machine with iTunes running connected to the internet that you can ssh into
+ - Some kind of natively iDevice-compatible VPN connection between your iDevice and iTunes machine
+   (iVPN can enable iDevice-compatible VPN functionality in OSX Lion desktop version)
+ - Access to a Mac computer at the remote network that you want to sync from
+
+
+:: Setup
+
+1. Set up passwordless ssh key authentication from the remote computer to your iTunes computer.
+
+On the remote computer or macbook, generate an ssh keypair:
+
+$ ssh-keygen
+
+Dump out the public key:
+
+$ cat ~/.ssh/id_rsa.pub
+
+This will dump the contents of the public key into your terminal.  Copy this and place it in
+~/.ssh/authorized_keys on the computer that has the iTunes library.  Set the permissions to mode 600
+using:
+
+$ chmod 600 ~/.ssh/authorized_keys
+
+From the remote computer / macbook you should now be able to ssh to your iTunes machine without a
+password using:
+
+ssh <ip>
+
+If this doesn't work, you'll need to fix it before continuing.
+
+2. On the remote computer / macbook, install the DNS-SD Ruby gem needed to run IRS:
+
+$ sudo gem install dnssd
+
+3. In the iTunesRemoteSync directory, copy the config.sample.rb file to config.rb:
+
+cp config.sample.rb config.rb
+
+4. Edit config.rb and set the parameters accordingly.  You must set the ssh parameters or the program
+won't work as it won't be able to connect to your remote iTunes machine.  You can optimise by also
+specifying your iTunes library name and iDevice name.  Note that the iDevice name is **NOT** the name
+you gave it in iTunes, it's a long ugly sequence of hex numbers (for the technically minded, an ipv4
+mac address concatenated with an ipv6 mac address).  To find your iDevice's device name you can run:
+
+./irs dump
+
+and it will dump out all the iTunes library and iDevices it can see on the local network.
+
+You can choose not to bother entering your iTunes library name and iDevice name if you wish, but the
+sync setup process will be slightly longer as it has to figure them out for you using Bonjour queries.
+Also if more than one device is found when you attempt to sync and you haven't specified a device name
+you will be prompted to choose which device should be proxy'd off to the remote iTunes library.
+
+At this point you should be ready to continue with..
+
+:: Usage
+
+
+1. Ensure iTunes is running on the remote iTunes machine.
+
+2. Ensure that your remote computer (eg macbook) and iDevice are on the same wifi network.  If you want
+to sync over a 3G connection that your macbook or other remote computer has, you'll need to first create
+an ad-hoc network between the iDevice and the macbook and give both devices a unique IP address.
+
+3. On the remote computer, establish the Bonjour proxies:
+
+$ ./irs sync
+
+After maybe 30 seconds to a minute (depending on the speed of your connection), your device should appear
+in iTunes on the iTunes machine.  The first time you do this it would be handy to have a screen sharing
+or VNC connection set up so you can see it in iTunes to verify it's working.  Once it appears you can
+sync as normal, but be aware that it can take a while if your connection is slow.
+
+Note that it may take up to a minute to show up in iTunes after establishing the proxies.
+
+When you're done syncing, you can disable the local and remote Bonjour proxy with:
+
+$ ./irs off
+
+
+Any bugs, issues, suggestions ---> http://twitter.com/m4rkw
+.
