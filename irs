@@ -300,8 +300,6 @@ else
 			RemoteSync.new.dump
 		when "sync"
 			RemoteSync.new.sync
-		when "lookup"
-			RemoteSync.new.lookup
 		when "off"
 			RemoteSync.new.off
 		else
