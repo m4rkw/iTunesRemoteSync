@@ -158,8 +158,6 @@ class RemoteSync
 
 		devices = self.browse("_apple-mobdev._tcp")
 
-		devices.push( {:name => "bob", :ip => "1.1.1.1", :port => 12345, :host => "HOST"})
-
 		if devices.empty?
 			puts "failed\n\nNo iDevices were found on the local network.\n"
 			exit
