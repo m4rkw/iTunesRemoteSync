@@ -215,7 +215,7 @@ class RemoteSync
 
 		self.print "OK\nEstablishing remote Bonjour proxy ... "
 
-		`ssh -p #{$ssh_port} #{$ssh_username}@#{$ssh_hostname} "screen -dmS -tirs_dnssd dns-sd -P #{device[:name]} _apple-mobdev._tcp local #{device[:port]} iphone.local. #{local_endpoint}" 2>/dev/null`
+		`ssh -p #{$ssh_port} #{$ssh_username}@#{$ssh_hostname} "screen -dmS -tirs_dnssd dns-sd -P '#{device[:name]}' _apple-mobdev._tcp local #{device[:port]} iphone.local. #{local_endpoint}" 2>/dev/null`
 
 		puts "OK\n\nThe proxies are up, your iDevice should appear in iTunes within 30-60 seconds.\n"
 		puts "When you're done syncing, type \"irs off\" to clear the proxies.\n\n"
